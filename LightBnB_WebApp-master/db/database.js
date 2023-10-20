@@ -85,7 +85,7 @@ const addUser = function(user) {
  * @param {string} guest_id The id of the user.
  * @return {Promise<[{}]>} A promise to the reservations.
  */
-const getAllReservations = function(guest_id, limit = 10) {
+const getAllReservations = function(guest_id, limit) {
   
   const queryStr = `SELECT reservations.*, properties.*
     FROM reservations
@@ -113,16 +113,64 @@ const getAllReservations = function(guest_id, limit = 10) {
  * @param {*} limit The number of results to return.
  * @return {Promise<[{}]>}  A promise to the properties.
  */
-const getAllProperties = function(options, limit = 10) {
+const getAllProperties = function(options, limit) {
+  
+  const queryParams = [];
 
-  return pool
-    .query(`SELECT * FROM properties LIMIT $1;` ,[limit])
-    .then((result) => {
-      return result.rows;
-    })
-    .catch((err) => {
-      console.log(err.message);
-    });
+  // all information that comes before the WHERE clause
+  let queryString = `
+  SELECT properties.*, AVG(property_reviews.rating) AS average_rating
+  FROM properties
+  JOIN property_reviews ON properties.id = property_id
+  `;
+
+  let conditionClause = 'WHERE';
+
+  // check if a city has been passed in
+  if (options.city) {
+    queryParams.push(`%${options.city}%`);
+    queryString += `${conditionClause} city LIKE $${queryParams.length} `; //use the length of the array to dynamically get the $n placeholder number
+    // 1 param has already existed => all later params should be joined with AND
+    conditionClause = 'AND';
+  }
+
+  // check if owner_id is passed in
+  if (options.owner_id) {
+    queryParams.push(options.owner_id);
+    queryString += `${conditionClause} properties.owner_id = $${queryParams.length}`;
+    conditionClause = 'AND';
+  }
+
+  if (options.minimum_price_per_night) {
+    queryParams.push(options.minimum_price_per_night * 100);
+    queryString += `${conditionClause} properties.cost_per_night >= $${queryParams.length}`;
+    conditionClause = 'AND';
+  }
+
+  if (options.maximum_price_per_night) {
+    queryParams.push(options.maximum_price_per_night * 100);
+    queryString += `${conditionClause} properties.cost_per_night <= $${queryParams.length}`;
+    conditionClause = 'AND';
+  }
+
+  if (options.minimum_rating) {
+    queryParams.push(options.minimum_rating);
+    queryString += `${conditionClause} average_rating >= $${queryParams.length}`;
+    conditionClause = 'AND';
+  }
+
+  // add query that comes after the WHERE clause
+  queryParams.push(limit);
+  queryString += `
+  GROUP BY properties.id
+  ORDER BY cost_per_night
+  LIMIT $${queryParams.length};
+  `;
+
+  // make sure we've done it right
+  console.log(queryString, queryParams);
+
+  return pool.query(queryString, queryParams).then((res) => res.rows);
 
 };
 
